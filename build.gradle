@@ -1,0 +1,83 @@
+plugins {
+  id 'java'
+  id 'org.springframework.boot' version '3.5.10'
+}
+
+group = 'com.github.dimitryivaniuta.gateway'
+version = '0.1.0'
+
+java {
+  toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+repositories { mavenCentral() }
+
+ext {
+  bootBom = '3.5.10'
+  lombokVersion = '1.18.42'
+  testcontainersBom = '1.21.4' // stable line; avoid mixing BOMs
+  jsonwebtoken = '0.13.0'
+}
+
+dependencies {
+  implementation "org.apache.commons:commons-compress:1.28.0"
+  implementation "org.assertj:assertj-core:3.27.7"
+  // Spring Boot BOM (versions for starters/flyway/postgres/kafka)
+  implementation platform("org.springframework.boot:spring-boot-dependencies:${bootBom}")
+  testImplementation platform("org.springframework.boot:spring-boot-dependencies:${bootBom}")
+
+  // Testcontainers BOM (single source of truth)
+  testImplementation platform("org.testcontainers:testcontainers-bom:${testcontainersBom}")
+
+  implementation 'org.springframework.boot:spring-boot-starter-web'
+  implementation 'org.springframework.boot:spring-boot-starter-validation'
+  implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+  implementation 'org.springframework.boot:spring-boot-starter-actuator'
+  implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+  implementation 'org.springframework.kafka:spring-kafka'
+
+  implementation 'org.flywaydb:flyway-core'
+  runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+  runtimeOnly  'org.postgresql:postgresql'
+
+  // Pure-Java Git access (no "git" binary needed in CI)
+  implementation 'org.eclipse.jgit:org.eclipse.jgit:7.5.0.202512021534-r'
+  implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml'
+
+  // --- Lombok ---
+  compileOnly         "org.projectlombok:lombok:${lombokVersion}"
+  annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
+  testCompileOnly     "org.projectlombok:lombok:${lombokVersion}"
+  testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
+
+  testImplementation 'org.springframework.boot:spring-boot-starter-test'
+  testImplementation 'org.springframework.kafka:spring-kafka-test'
+  testImplementation 'org.testcontainers:junit-jupiter'
+  testImplementation 'org.testcontainers:testcontainers'
+  testImplementation 'org.testcontainers:postgresql'
+  testImplementation 'org.testcontainers:kafka'
+  testImplementation 'org.springframework.security:spring-security-test'
+  testImplementation 'org.springframework.kafka:spring-kafka-test'
+
+}
+
+test { useJUnitPlatform() }
+
+tasks.register('secretsScan', JavaExec) {
+  group = 'verification'
+  description = 'Scans a Git range for secret-like strings and fails the build if any are found.'
+
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'com.github.dimitryivaniuta.gateway.security.secrets.cli.SecretsScannerCli'
+
+  def base = (project.findProperty('base') ?: System.getenv('BASE_SHA') ?: 'HEAD~20').toString()
+  def head = (project.findProperty('head') ?: System.getenv('HEAD_SHA') ?: 'HEAD').toString()
+  def format = (project.findProperty('format') ?: 'text').toString()
+  def out = (project.findProperty('out') ?: "${buildDir}/reports/secrets-scan/report.json").toString()
+  def postUrl = (project.findProperty('postUrl') ?: System.getenv('SECRETS_SCAN_POST_URL') ?: '').toString()
+
+  args '--base', base, '--head', head, '--format', format, '--output', out
+  if (postUrl?.trim()) args '--post-url', postUrl.trim()
+}
+
+tasks.named('check') { dependsOn tasks.named('secretsScan') }
